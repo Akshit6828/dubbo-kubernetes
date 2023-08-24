@@ -1,25 +1,103 @@
-# dubbo-kubernetes
-Dubbo integration with k8s
+# NOTICE
+此分支是 Dubbo Admin 正在基于 Go 语言重构的开发分支，目前仍在开发过程中。
+如您正寻求将 Dubbo Admin 用作生产环境，想了解 Admin 的能力及安装方式，请参见 [develop 分支](https://github.com/apache/dubbo-admin/tree/develop#dubbo-admin) 及内部相关使用说明。
 
+# 运行 Admin
+## 启动 Zookeeper
+首先，你需要在本地启动一个 [zookeeper server](https://zookeeper.apache.org/doc/current/zookeeperStarted.html)，用作 Admin 连接的注册/配置中心。
 
-# 初步思考
-kubernetes是天然可作为微服务的地址注册中心，类似于zookeeper、Consul。 具体来说，kubernetes中的Pod是对于应用的运行实例，Pod的被调度部署/启停都会调用API-Server的服务来保持其状态到ETCD；kubernetes中的service是对应微服务的概念，定义如下
+## 启动 Admin
 
-A Kubernetes Service is an abstraction layer which defines a logical set of Pods and enables external traffic exposure, load balancing and service discovery for those Pods.
+### Run with IDE
+Once open this project in GoLand, a pre-configured Admin runnable task can be found from "Run Configuration" pop up menu as shown below.
 
-概括来说kubernetes service具有如下特点
+![image.png](docs/images/ide_configuration.png)
 
-每个Service都有一个唯一的名字，及对应IP。IP是kubernetes自动分配的，名字是开发者自己定义的。
-Service的IP有几种表现形式，分别是ClusterIP，NodePort,LoadBalance,Ingress。 ClusterIP主要用于集群内通信；NodePort，Ingress，LoadBalance用于暴露服务给集群外的访问入口。
+Click the `Run` button and you can get the Admin process started locally.
 
-乍一看，kubernetes的service都是唯一的IP，在原有的Dubbo/HSF固定思维下：Dubbo/HSF的service是有整个服务集群的IP聚合而成，貌似是有本质区别的，细想下来差别不大，因为kubernetes下的唯一IP只是一个VIP，背后挂在了多个endpoint，那才是事实上的处理节点。
+> But before doing that, you might need to change the configuration file located at `/conf/dubboadmin.yml` to make sure `registry.address` is pointed to the zookeeper server you started before.
 
-此处只讨论集群内的Dubbo服务在同一个kubernetes集群内访问；至于kubernetes外的consumer访问kubernetes内的provider，涉及到网络地址空间的问题，一般需要GateWay/loadbalance来做映射转换，不展开讨论。针对kubernetes内有两种方案可选：
+```yaml
+admin:
+  registry:
+    address: zookeeper://127.0.0.1:2181
+  config-center: zookeeper://127.0.0.1:2181
+  metadata-report:
+    address: zookeeper://127.0.0.1:2181
+```
 
-- DNS： 默认kubernetes的service是靠DNS插件(最新版推荐是coreDNS)， Dubbo上有个 [proposal](https://github.com/apache/incubator-dubbo/issues/2043) 是关于这个的。我的理解是static resolution的机制是最简单最需要支持的一种service discovery机制，具体也可以参考Envoy在此的观点，由于HSF/Dubbo一直突出其软负载的地址发现能力，反而忽略Static的策略。同时蚂蚁的SOFA一直是支持此种策略，那一个SOFA工程的工程片段做一个解释。这样做有两个好处，1）当软负载中心crash不可用造成无法获取地址列表时，有一定的机制Failover到此策略来处理一定的请求。 2）在LDC/单元化下，蚂蚁的负载中心集群是机房/区域内收敛部署的，首先保证软负载中心的LDC化了进而稳定可控，当单元需要请求中心时，此VIP的地址发现就排上用场了。 
+### Run with command line
 
-- API：DNS是依靠DNS插件进行的，相当于额外的运维开销，所以考虑直接通过kubernetes的client来获取endpoint。事实上，通过访问kubernetes的API server接口是可以直接获取某个service背后的endpoint列表，同时可以监听其地址列表的变化。从而实现Dubbo/HSF所推荐的软负载发现策略。具体可以参考代码：
+```shell
+$ export ADMIN_CONFIG_PATH=/path/to/your/admin/project/conf/admin.yml
+$ cd cmd/admin
+$ go run . 
+```
 
-以上两种思路都需要考虑以下两点
-- kubernetes和Dubbo对于service的名字是映射一致的。Dubbo的服务是由servicename，group，version三个来确定其唯一性，而且servicename一般其服务接口的包名称，比较长。需要映射kubernetes的service名与dubbo的服务名。要么是像SOFA那样增加一个属性来进行定义，这个是改造大点，但最合理；要么是通过固定规则来引用部署的环境变量，可用于快速验证。
-- 端口问题。默认Pod与Pod的网络互通算是解决了。需要验证。
+Open the browser and visit http://localhost:38080/admin/ to open the console.
+
+> If you also have the Java version admin running, make sure to use different port to avoid conflict.
+
+### 一些 Dubbo 客户端示例
+为了能在 Admin 控制台看到一些示例数据，可以在本地启动一些示例项目。可参考以下两个链接，务必确保示例使用的注册中心指向你之前启动的 zookeeper server，如果示例中有使用 embeded zookeeper 则应该进行修改并指向你本地起的 zookeeper 集群。
+
+1. https://github.com/apache/dubbo-samples/tree/master/1-basic/dubbo-samples-spring-boot
+2. https://dubbo.apache.org/zh-cn/overview/quickstart/java/brief/
+
+## 前端开发步骤
+项目完整前端代码存放在：`[dubbo-admin-ui](./dubbo-admin-ui/README.md)`。
+
+## 贡献代码
+开发过程中，可以使用预先定义好的 Makefile 任务来完成代码检查、测试等一系列工作。以下是一些命令说明
+
+### 代码格式化
+```shell
+make fmt   #Run gofumpt against code.
+```
+
+### 代码检查
+To run all code formatting, linting and vetting tools use the target:
+
+```shell
+make lint     #Run golang lint against code
+```
+
+### 测试代码
+
+```shell
+make test             #Run all tests
+make test-dubboctl    #Run tests for dubboctl
+make test-admin       #Run tests for admin
+make test-authority   #Run tests for authority
+```
+
+### Swagger API
+```shell
+make swagger  #Generate dubbo-admin swagger docs in hack/swagger
+```
+
+### 打包
+```shell
+make build            #Build binary with the dubbo admin, authority, and dubboctl
+make build-admin      #Build binary with the dubbo admin.
+make build-authority  #Build binary with the dubbo authority.
+make build-dubboctl   #Build binary with the dubbo dubboctl.
+make build-ui         #Build the distribution of the admin ui pages.
+```
+### 生成镜像
+```shell
+make image            #Build docker image with the dubbo admin, authority and admin-ui
+make image-admin      #Build docker image with the dubbo admin.
+make image-authority  #Build docker image with the dubbo authority.
+make image-ui         #Build docker image with the dubbo admin ui.
+```
+### 多平台生成镜像和打包
+```shell
+make buildx            #Build and push docker cross-platform image for the dubbo admin and authority
+make buildx-admin      #Build and push docker image with the dubbo admin for cross-platform support
+make buildx-authority  #Build and push docker image with the dubbo authority for cross-platform support
+make buildx-dubboctl   #Build the dubboctl distribution for cross-platform support
+```
+
+## 发布指南
+正式发布的一些 make 命令...
